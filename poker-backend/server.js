@@ -5,6 +5,9 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const shortid = require('shortid');
 
+import cors from "cors";
+app.use(cors());
+
 // Import Models
 const Room = require('./models/Room');
 

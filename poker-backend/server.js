@@ -6,6 +6,9 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const shortid = require('shortid');
 
+// Configure Mongoose to use Promises and enable debug mode
+mongoose.set('debug', true);
+
 const Room = require('./models/Room');
 
 const app = express();
@@ -14,9 +17,27 @@ app.use(express.json());
 const server = http.createServer(app);
 
 const MONGO_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/poker-manager'; 
+console.log('Attempting to connect to MongoDB...', { uri: MONGO_URI.replace(/mongodb\+srv:\/\/([^:]+):([^@]+)@/, 'mongodb+srv://[hidden]:[hidden]@') });
+
 mongoose.connect(MONGO_URI)
-    .then(() => console.log('MongoDB Connected successfully.'))
-    .catch(err => console.error('MongoDB Connection Error:', err));
+    .then(() => {
+        console.log('MongoDB Connected successfully.');
+        // Test the connection by making a simple query
+        return mongoose.connection.db.admin().ping();
+    })
+    .then(() => {
+        console.log('MongoDB connection is healthy - ping successful');
+    })
+    .catch(err => {
+        console.error('MongoDB Connection Error:', {
+            error: err.message,
+            code: err.code,
+            name: err.name,
+            stack: err.stack
+        });
+        // Don't exit the process, but log the error
+        console.error('Server will continue running but MongoDB operations will fail');
+    });
 
 const io = new Server(server, {
     cors: {
@@ -216,7 +237,10 @@ io.on('connection', (socket) => {
 app.post('/api/rooms', async (req, res) => {
     try {
         const { name } = req.body;
+        console.log('Received request to create room:', { name });
+        
         if (!name) {
+            console.log('Room creation failed: name is required');
             return res.status(400).json({ msg: 'Room name is required.' });
         }
         
@@ -229,11 +253,21 @@ app.post('/api/rooms', async (req, res) => {
             currentTurnIndex: 0
         });
 
-        await newRoom.save();
-        res.status(201).json(newRoom);
+        console.log('Attempting to save room:', { name, code: newRoom.code });
+        const savedRoom = await newRoom.save();
+        console.log('Room created successfully:', { id: savedRoom._id, code: savedRoom.code });
+        res.status(201).json(savedRoom);
     } catch (err) {
-        console.error(err);
-        res.status(500).send('Server Error');
+        console.error('Error creating room:', {
+            error: err.message,
+            stack: err.stack,
+            name: err.name
+        });
+        res.status(500).json({ 
+            error: 'Server Error', 
+            details: err.message,
+            type: err.name 
+        });
     }
 });
 

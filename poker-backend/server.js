@@ -24,7 +24,7 @@ mongoose.connect(MONGO_URI)
 // --- Socket.IO Setup ---
 const io = new Server(server, {
     cors: {
-        origin: 'http://localhost:3000', // Allow your React app
+        origin: ['http://localhost:3000','https://poker-frontend-tau.vercel.app/'], 
         methods: ['GET', 'POST']
     }
 });

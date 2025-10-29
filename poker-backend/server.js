@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -5,35 +6,28 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const shortid = require('shortid');
 
-// Import Models
 const Room = require('./models/Room');
 
-// --- Basic Setup ---
 const app = express();
 app.use(cors());
 app.use(express.json());
 const server = http.createServer(app);
 
-// --- MongoDB Connection ---
-// !! IMPORTANT: Replace with your own MongoDB connection string
-const MONGO_URI = 'mongodb://127.0.0.1:27017/poker-manager'; 
+const MONGO_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/poker-manager'; 
 mongoose.connect(MONGO_URI)
     .then(() => console.log('MongoDB Connected successfully.'))
     .catch(err => console.error('MongoDB Connection Error:', err));
 
-// --- Socket.IO Setup ---
 const io = new Server(server, {
     cors: {
-        origin: ['http://localhost:3000','https://poker-frontend-tau.vercel.app/'], 
+        origin: [process.env.CORS_ORIGIN || 'http://localhost:3000'], 
         methods: ['GET', 'POST']
     }
 });
 
-// --- In-memory map to link sockets to players ---
-// Map<socket.id, Player._id>
+// socket->player
 const socketPlayerMap = new Map();
 
-// --- Helper: Find next active player ---
 function getNextTurnIndex(players, currentIndex) {
     let nextIndex = (currentIndex + 1) % players.length;
     let attempts = 0;
@@ -44,11 +38,9 @@ function getNextTurnIndex(players, currentIndex) {
     return nextIndex;
 }
 
-// --- Socket.IO Connection Logic ---
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
 
-    // --- 1. JOIN ROOM ---
     socket.on('room:join', async ({ roomCode, playerId }) => {
         try {
             const room = await Room.findOne({ code: roomCode });
@@ -75,7 +67,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 2. ADD PLAYER ---
     socket.on('player:add', async ({ roomCode, playerName, balance }) => {
         try {
             const newPlayer = {
@@ -105,7 +96,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 3. PLAYER ACTION ---
     socket.on('player:action', async ({ roomCode, action, amount }) => {
         try {
             const playerId = socketPlayerMap.get(socket.id);
@@ -136,7 +126,7 @@ io.on('connection', (socket) => {
             } 
             else if (action === 'call') {
                 cost = room.maxBet - player.currentBet;
-                if (cost > player.balance) cost = player.balance; // All-in
+                if (cost > player.balance) cost = player.balance; // allin
 
                 player.balance -= cost;
                 player.currentBet += cost;
@@ -172,36 +162,30 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- 4. RESET ROUND (Simplified) ---
     socket.on('round:reset', async ({ roomCode }) => {
         try {
-            // Step 1: Find room and set flag to show cards
             let room = await Room.findOne({ code: roomCode });
             if (!room) return;
 
-            room.showCards = true; // Just set this to true
+            room.showCards = true;
             
             let updatedRoom = await room.save();
             io.to(roomCode).emit('room:update', updatedRoom);
 
-            // Step 2: After 5 seconds, actually reset the round
             setTimeout(async () => {
                 try {
                     let roomToReset = await Room.findOne({ code: roomCode });
                     if (!roomToReset) return;
 
-                    // Reset player statuses
                     roomToReset.players.forEach(player => {
                         player.folded = false;
                         player.currentBet = 0;
                     });
                     
-                    // Reset room state
                     roomToReset.pot = 0;
                     roomToReset.maxBet = 0;
                     roomToReset.currentTurnIndex = 0;
                     
-                    // Clear the cards
                     roomToReset.showCards = false;
 
                     const finalRoom = await roomToReset.save();
@@ -209,7 +193,7 @@ io.on('connection', (socket) => {
                 } catch (err) {
                      console.error('Error during round reset timeout:', err);
                 }
-            }, 5000); // 5-second delay
+            }, 5000);
 
         } catch (err) {
             console.error(err);
@@ -217,7 +201,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // --- Disconnect ---
     socket.on('disconnect', () => {
         console.log(`User disconnected: ${socket.id}`);
         const playerId = socketPlayerMap.get(socket.id);
@@ -229,7 +212,6 @@ io.on('connection', (socket) => {
 });
 
 
-// --- REST API Endpoints ---
 
 app.post('/api/rooms', async (req, res) => {
     try {
@@ -269,6 +251,5 @@ app.get('/api/rooms/:code', async (req, res) => {
 });
 
 
-// --- Start Server ---
 const PORT = process.env.PORT || 5001;
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));

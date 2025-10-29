@@ -9,8 +9,8 @@ function PokerTable({
 }) {
     
     const getPlayerStyle = (index, totalPlayers) => {
-        const radius = 280; // Radius of the circle (in pixels)
-        const angle = (index / totalPlayers) * 2 * Math.PI - (Math.PI / 2); // Start from top
+        const radius = 280;
+        const angle = (index / totalPlayers) * 2 * Math.PI - (Math.PI / 2);
         
         const x = Math.cos(angle) * radius;
         const y = Math.sin(angle) * radius;

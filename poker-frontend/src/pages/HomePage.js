@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// !! IMPORTANT: Change to your IP (e.g., 'http://192.168.1.10:5001/api') 
-// for testing on other devices.
-const API_URL = 'http://localhost:5001/api';
+const API_URL = process.env.REACT_APP_API_URL;
 
 function HomePage() {
     const [roomName, setRoomName] = useState('');

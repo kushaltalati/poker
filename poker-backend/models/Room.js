@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
-const PlayerSchema = require('./Player'); // Import the sub-document
+const PlayerSchema = require('./Player');
 
 const RoomSchema = new Schema({
     name: {
@@ -12,17 +12,15 @@ const RoomSchema = new Schema({
         required: true,
         unique: true
     },
-    players: [PlayerSchema], // Array of embedded player documents
+    players: [PlayerSchema],
     pot: {
         type: Number,
         default: 0
     },
-    // The highest bet any player has made this round
     maxBet: {
         type: Number,
         default: 0
     },
-    // Index of the player whose turn it is
     currentTurnIndex: {
         type: Number,
         default: 0

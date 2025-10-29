@@ -6,7 +6,6 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const shortid = require('shortid');
 
-// Configure Mongoose to use Promises and enable debug mode
 mongoose.set('debug', true);
 
 const Room = require('./models/Room');
@@ -22,7 +21,6 @@ console.log('Attempting to connect to MongoDB...', { uri: MONGO_URI.replace(/mon
 mongoose.connect(MONGO_URI)
     .then(() => {
         console.log('MongoDB Connected successfully.');
-        // Test the connection by making a simple query
         return mongoose.connection.db.admin().ping();
     })
     .then(() => {
@@ -35,7 +33,6 @@ mongoose.connect(MONGO_URI)
             name: err.name,
             stack: err.stack
         });
-        // Don't exit the process, but log the error
         console.error('Server will continue running but MongoDB operations will fail');
     });
 
@@ -46,17 +43,50 @@ const io = new Server(server, {
     }
 });
 
-// socket->player
 const socketPlayerMap = new Map();
 
 function getNextTurnIndex(players, currentIndex) {
     let nextIndex = (currentIndex + 1) % players.length;
     let attempts = 0;
-    while (players[nextIndex].folded && attempts < players.length) {
+    while ((players[nextIndex].folded || players[nextIndex].inactive) && attempts < players.length) {
         nextIndex = (nextIndex + 1) % players.length;
         attempts++;
     }
     return nextIndex;
+}
+
+function getActivePlayers(players) {
+    return players.filter(p => !p.folded && !p.inactive);
+}
+
+function haveAllActivePlayersMatchedMaxBet(players, maxBet) {
+    return players.filter(p => !p.folded).every(p => p.currentBet === maxBet);
+}
+
+function advanceStage(room) {
+    if (room.stage === 'preflop') {
+        room.stage = 'flop';
+        while (room.communityCards.length < 3) {
+            room.communityCards.push('card');
+        }
+    } else if (room.stage === 'flop') {
+        room.stage = 'turn';
+        if (room.communityCards.length < 4) room.communityCards.push('card');
+    } else if (room.stage === 'turn') {
+        room.stage = 'river';
+        if (room.communityCards.length < 5) room.communityCards.push('card');
+    } else if (room.stage === 'river') {
+        room.stage = 'showdown';
+        room.showCards = true;
+        room.canSelectWinner = true;
+    }
+
+    room.players.forEach(p => { p.currentBet = 0; });
+    room.maxBet = 0;
+
+    const startFrom = typeof room.actionMarkerIndex === 'number' ? room.actionMarkerIndex : room.currentTurnIndex;
+    room.currentTurnIndex = getNextTurnIndex(room.players, startFrom);
+    room.actionMarkerIndex = room.currentTurnIndex;
 }
 
 io.on('connection', (socket) => {
@@ -94,6 +124,7 @@ io.on('connection', (socket) => {
                 name: playerName,
                 balance: balance,
                 folded: false,
+                inactive: false,
                 currentBet: 0
             };
             
@@ -170,9 +201,36 @@ io.on('connection', (socket) => {
                 player.currentBet += cost;
                 room.pot += cost;
                 room.maxBet = player.currentBet;
+
+                room.actionMarkerIndex = playerIndex;
             }
 
-            room.currentTurnIndex = getNextTurnIndex(room.players, room.currentTurnIndex);
+            const nextIndex = getNextTurnIndex(room.players, room.currentTurnIndex);
+            room.currentTurnIndex = nextIndex;
+
+            const activePlayers = getActivePlayers(room.players);
+
+            let roundEnds = false;
+            if (activePlayers.length <= 1) {
+                roundEnds = true;
+                room.stage = 'showdown';
+                room.showCards = true;
+            } else {
+                if (room.maxBet === 0) {
+                    if (room.actionMarkerIndex === nextIndex) {
+                        roundEnds = true;
+                    }
+                } else {
+                    const everyoneMatched = haveAllActivePlayersMatchedMaxBet(room.players, room.maxBet);
+                    if (everyoneMatched && room.actionMarkerIndex === nextIndex) {
+                        roundEnds = true;
+                    }
+                }
+            }
+
+            if (roundEnds) {
+                advanceStage(room);
+            }
             
             const updatedRoom = await room.save();
             io.to(roomCode).emit('room:update', updatedRoom);
@@ -206,6 +264,10 @@ io.on('connection', (socket) => {
                     roomToReset.pot = 0;
                     roomToReset.maxBet = 0;
                     roomToReset.currentTurnIndex = 0;
+                    roomToReset.stage = 'preflop';
+                    roomToReset.actionMarkerIndex = 0;
+                    roomToReset.communityCards = [];
+                    roomToReset.canSelectWinner = false;
                     
                     roomToReset.showCards = false;
 
@@ -228,6 +290,95 @@ io.on('connection', (socket) => {
         if (playerId) {
             console.log(`Unlinking socket ${socket.id} from player ${playerId}`);
             socketPlayerMap.delete(socket.id);
+        }
+    });
+
+    socket.on('player:leave', async ({ roomCode, mode }) => {
+        try {
+            const playerId = socketPlayerMap.get(socket.id);
+            if (!playerId) {
+                socket.emit('error:not_authorized', 'You are not linked to a player.');
+                return;
+            }
+
+            const room = await Room.findOne({ code: roomCode });
+            if (!room) return;
+
+            const idx = room.players.findIndex(p => p._id.toString() === playerId);
+            if (idx === -1) {
+                socket.emit('error:not_authorized', 'Player not found in this room.');
+                return;
+            }
+
+            if (mode === 'permanent') {
+                const removingBeforeTurn = idx < room.currentTurnIndex;
+                const removingIsTurn = idx === room.currentTurnIndex;
+                room.players.splice(idx, 1);
+                if (room.players.length === 0) {
+                    room.currentTurnIndex = 0;
+                } else {
+                    if (removingBeforeTurn) {
+                        room.currentTurnIndex = (room.currentTurnIndex - 1 + room.players.length) % room.players.length;
+                    } else if (removingIsTurn) {
+                        room.currentTurnIndex = room.currentTurnIndex % room.players.length;
+                    }
+                }
+                if (typeof room.actionMarkerIndex === 'number') {
+                    room.actionMarkerIndex = Math.min(room.actionMarkerIndex, Math.max(0, room.players.length - 1));
+                }
+            } else {
+                const p = room.players[idx];
+                p.inactive = true;
+                p.folded = true;
+                if (idx === room.currentTurnIndex) {
+                    room.currentTurnIndex = getNextTurnIndex(room.players, room.currentTurnIndex);
+                }
+            }
+
+            const updatedRoom = await room.save();
+            io.to(roomCode).emit('room:update', updatedRoom);
+        } catch (err) {
+            console.error(err);
+            socket.emit('error:server', 'Error leaving the game.');
+        }
+    });
+    
+    socket.on('round:award', async ({ roomCode, winnerIds }) => {
+        try {
+            const room = await Room.findOne({ code: roomCode });
+            if (!room) return;
+
+            if (!Array.isArray(winnerIds) || winnerIds.length === 0) {
+                socket.emit('error:invalid_award', 'No winners provided.');
+                return;
+            }
+
+            const winners = room.players.filter(p => winnerIds.includes(p._id.toString()));
+            if (winners.length === 0) {
+                socket.emit('error:invalid_award', 'Winners not found in room.');
+                return;
+            }
+
+            const totalPot = room.pot;
+            const share = Math.floor(totalPot / winners.length);
+            const remainder = totalPot % winners.length;
+
+            winners.forEach((p, idx) => {
+                p.balance += share + (idx === 0 ? remainder : 0);
+            });
+
+            room.pot = 0;
+            room.canSelectWinner = false;
+            // Clear community cards and hide them after award
+            room.communityCards = [];
+            room.showCards = false;
+            room.stage = 'preflop';
+
+            const updatedRoom = await room.save();
+            io.to(roomCode).emit('room:update', updatedRoom);
+        } catch (err) {
+            console.error(err);
+            socket.emit('error:server', 'Error awarding pot.');
         }
     });
 });

@@ -68,13 +68,11 @@ function Player({ player, style, isActive, isSelf, roomCode, maxBet }) {
                 <div className="player-icon">{player.name[0]}</div>
                 <div className="player-info">
                     <strong className="player-name">{player.name.split(' ')[0]}</strong>
-                    {/* UPDATED SYMBOL */}
                     <span className="player-balance">₹{player.balance}</span>
                 </div>
             </div>
 
             {player.currentBet > 0 && (
-                // UPDATED SYMBOL
                 <span className="player-bet-chip">₹{player.currentBet}</span>
             )}
 
@@ -89,7 +87,6 @@ function Player({ player, style, isActive, isSelf, roomCode, maxBet }) {
                                 className="btn-action btn-call"
                                 disabled={callAmount > player.balance && callAmount > 0} 
                             >
-                                {/* UPDATED SYMBOL */}
                                 {callAmount === 0 ? 'Check' : `Call ₹${callAmount}`}
                             </button>
                             <button onClick={onRaiseClick} className="btn-action btn-raise">Raise</button>
@@ -98,7 +95,6 @@ function Player({ player, style, isActive, isSelf, roomCode, maxBet }) {
                     
                     {isRaising && (
                         <div className="raise-group">
-                            {/* UPDATED SYMBOL */}
                             <span>₹</span>
                             <input
                                 type="number"

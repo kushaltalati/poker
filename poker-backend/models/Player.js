@@ -14,6 +14,10 @@ const PlayerSchema = new Schema({
         type: Boolean,
         default: false
     },
+    inactive: {
+        type: Boolean,
+        default: false
+    },
     currentBet: {
         type: Number,
         default: 0

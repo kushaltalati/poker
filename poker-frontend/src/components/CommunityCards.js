@@ -1,23 +1,31 @@
 import React from 'react';
 
-function CommunityCards() {
+function CommunityCards({ communityCards = [], stage }) {
+    const flop = communityCards.slice(0, 3);
+    const turn = communityCards.slice(3, 4);
+    const river = communityCards.slice(4, 5);
+
     return (
         <div className="community-cards-container">
             <div className="card-group">
                 <span className="card-group-label">Flop</span>
-                <div className="card-back" style={{ animationDelay: '0s' }}></div>
-                <div className="card-back" style={{ animationDelay: '0.1s' }}></div>
-                <div className="card-back" style={{ animationDelay: '0.2s' }}></div>
+                {flop.map((_, idx) => (
+                    <div key={`flop-${idx}`} className="card-back" style={{ animationDelay: `${idx * 0.1}s` }}></div>
+                ))}
             </div>
             
             <div className="card-group">
                 <span className="card-group-label">Turn</span>
-                <div className="card-back" style={{ animationDelay: '0.3s' }}></div>
+                {turn.map((_, idx) => (
+                    <div key={`turn-${idx}`} className="card-back" style={{ animationDelay: '0.3s' }}></div>
+                ))}
             </div>
 
             <div className="card-group">
                 <span className="card-group-label">River</span>
-                <div className="card-back" style={{ animationDelay: '0.4s' }}></div>
+                {river.map((_, idx) => (
+                    <div key={`river-${idx}`} className="card-back" style={{ animationDelay: '0.4s' }}></div>
+                ))}
             </div>
         </div>
     );

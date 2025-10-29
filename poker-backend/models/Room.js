@@ -25,6 +25,23 @@ const RoomSchema = new Schema({
         type: Number,
         default: 0
     },
+    stage: {
+        type: String,
+        enum: ['preflop', 'flop', 'turn', 'river', 'showdown'],
+        default: 'preflop'
+    },
+    actionMarkerIndex: {
+        type: Number,
+        default: 0
+    },
+    communityCards: {
+        type: [String],
+        default: []
+    },
+    canSelectWinner: {
+        type: Boolean,
+        default: false
+    },
     showCards: {
         type: Boolean,
         default: false

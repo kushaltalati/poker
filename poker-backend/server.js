@@ -12,7 +12,9 @@ const Room = require('./models/Room');
 
 const app = express();
 app.use(cors({
-        origin: ['http://localhost:3000', 'https://poker-frontend-tau.vercel.app/']
+    origin: ['http://localhost:3000', 'https://poker-frontend-tau.vercel.app'],
+    credentials: true,
+    methods: ['GET', 'POST']
 }));
 app.use(express.json());
 const server = http.createServer(app);
@@ -40,7 +42,8 @@ mongoose.connect(MONGO_URI)
 
 const io = new Server(server, {
     cors: {
-        origin: [process.env.CORS_ORIGIN || 'http://localhost:3000'], 
+        origin: ['http://localhost:3000', 'https://poker-frontend-tau.vercel.app'],
+        credentials: true,
         methods: ['GET', 'POST']
     }
 });

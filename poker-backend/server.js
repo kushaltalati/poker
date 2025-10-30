@@ -11,7 +11,9 @@ mongoose.set('debug', true);
 const Room = require('./models/Room');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+        origin: ['http://localhost:3000', 'https://poker-frontend-tau.vercel.app/']
+}));
 app.use(express.json());
 const server = http.createServer(app);
 

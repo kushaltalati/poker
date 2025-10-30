@@ -46,6 +46,7 @@ const io = new Server(server, {
 const socketPlayerMap = new Map();
 
 function getNextTurnIndex(players, currentIndex) {
+    if (!players || players.length === 0) return 0;
     let nextIndex = (currentIndex + 1) % players.length;
     let attempts = 0;
     while ((players[nextIndex].folded || players[nextIndex].inactive) && attempts < players.length) {
@@ -64,6 +65,7 @@ function haveAllActivePlayersMatchedMaxBet(players, maxBet) {
 }
 
 function advanceStage(room) {
+    // Advances stage to next and sets up community cards; used when round completes normally
     if (room.stage === 'preflop') {
         room.stage = 'flop';
         while (room.communityCards.length < 3) {
@@ -81,12 +83,33 @@ function advanceStage(room) {
         room.canSelectWinner = true;
     }
 
+    // Reset current bets and marker for next betting round
     room.players.forEach(p => { p.currentBet = 0; });
     room.maxBet = 0;
 
     const startFrom = typeof room.actionMarkerIndex === 'number' ? room.actionMarkerIndex : room.currentTurnIndex;
     room.currentTurnIndex = getNextTurnIndex(room.players, startFrom);
     room.actionMarkerIndex = room.currentTurnIndex;
+}
+
+/**
+ * Resets round state in the room object (server-side) — does NOT save or emit.
+ * Use await save + emit after calling this where appropriate.
+ */
+function performRoundResetInMemory(room) {
+    room.players.forEach(player => {
+        player.folded = false;
+        player.currentBet = 0;
+        player.inactive = player.inactive || false; // keep spectators/inactive as-is
+    });
+    room.pot = 0;
+    room.maxBet = 0;
+    room.currentTurnIndex = 0;
+    room.stage = 'preflop';
+    room.actionMarkerIndex = 0;
+    room.communityCards = [];
+    room.canSelectWinner = false;
+    room.showCards = false;
 }
 
 io.on('connection', (socket) => {
@@ -148,6 +171,11 @@ io.on('connection', (socket) => {
         }
     });
 
+    /**
+     * Core action handler: fold / call / raise
+     * When only one active player remains after any fold, award pot to them,
+     * emit the result, wait 4s (show the winner), then reset the round.
+     */
     socket.on('player:action', async ({ roomCode, action, amount }) => {
         try {
             const playerId = socketPlayerMap.get(socket.id);
@@ -186,8 +214,8 @@ io.on('connection', (socket) => {
             } 
             else if (action === 'raise') {
                 const raiseAmount = Number(amount);
-                if (raiseAmount <= room.maxBet) {
-                   socket.emit('error:invalid_raise', 'Raise must be higher than the current max bet.');
+                if (isNaN(raiseAmount) || raiseAmount <= room.maxBet) {
+                   socket.emit('error:invalid_raise', 'Raise must be a number greater than the current max bet.');
                    return;
                 }
                 
@@ -205,21 +233,32 @@ io.on('connection', (socket) => {
                 room.actionMarkerIndex = playerIndex;
             }
 
+            // Move to next active player's index
             const nextIndex = getNextTurnIndex(room.players, room.currentTurnIndex);
             room.currentTurnIndex = nextIndex;
 
+            // Count active players (not folded and not inactive)
             const activePlayers = getActivePlayers(room.players);
 
+            // Determine if the round ends (normal flow) or if only one active player left
             let roundEnds = false;
-            let winnerId = null;
-            if (activePlayers.length === 1 && room.pot > 0) {
+            let singleWinnerId = null;
+
+            if (activePlayers.length <= 1) {
+                // Only one player left -> award the pot to them immediately (but show results before reset)
                 roundEnds = true;
-                winnerId = activePlayers[0]._id.toString();
-            } else if (activePlayers.length <= 1) {
-                roundEnds = true;
+                const winner = activePlayers[0];
+                if (winner) {
+                    singleWinnerId = winner._id.toString();
+                    // Award pot immediately in-memory
+                    winner.balance += room.pot;
+                }
+                // Set round to showdown so clients can reveal cards
                 room.stage = 'showdown';
                 room.showCards = true;
+                room.canSelectWinner = false; // no manual selection needed in auto-win
             } else {
+                // Normal round end detection when everyone matched or action marker cycles
                 if (room.maxBet === 0) {
                     if (room.actionMarkerIndex === nextIndex) {
                         roundEnds = true;
@@ -230,25 +269,58 @@ io.on('connection', (socket) => {
                         roundEnds = true;
                     }
                 }
+
+                if (roundEnds) {
+                    // Progress to next stage if normal flow
+                    advanceStage(room);
+                }
             }
 
-            if (roundEnds && winnerId) {
-                // Award whole pot to this player, reset table
-                const winner = room.players.find(p => p._id.toString() === winnerId);
-                if (winner) winner.balance += room.pot;
-                room.pot = 0;
-                room.canSelectWinner = false;
-                room.communityCards = [];
-                room.showCards = false;
-                room.stage = 'preflop';
-                room.maxBet = 0;
-                room.players.forEach(p => { p.currentBet = 0; p.folded = false; });
-            } else if (roundEnds) {
-                advanceStage(room);
-            }
-            
+            // Save room now (after action and possible immediate awarding)
             const updatedRoom = await room.save();
+
+            // Emit the update to clients
             io.to(roomCode).emit('room:update', updatedRoom);
+
+            if (singleWinnerId) {
+                // Emit round ended info so frontends can show a "winner" toast/pop-up
+                io.to(roomCode).emit('round:ended', { winnerId: singleWinnerId, amountWon: updatedRoom.pot });
+
+                // Wait for a few seconds so clients can display the winner/show cards
+                const SHOW_WINNER_MS = 4000; // 4 seconds; change as desired
+
+                setTimeout(async () => {
+                    try {
+                        // Reload room (to prevent race conditions)
+                        const roomToReset = await Room.findOne({ code: roomCode });
+                        if (!roomToReset) return;
+
+                        // The pot was already awarded in-memory to winner above, but we must set pot to 0 in DB state
+                        roomToReset.pot = 0;
+                        // Clear community cards and hide them after the reveal
+                        roomToReset.communityCards = [];
+                        roomToReset.showCards = false;
+                        roomToReset.canSelectWinner = false;
+                        roomToReset.stage = 'preflop';
+                        // Reset bets/folded flags for active players but keep inactive flags as they are
+                        roomToReset.players.forEach(p => {
+                            p.folded = false;
+                            p.currentBet = 0;
+                        });
+                        roomToReset.maxBet = 0;
+
+                        // Reset turn index safely
+                        roomToReset.currentTurnIndex = 0;
+                        roomToReset.actionMarkerIndex = 0;
+
+                        // Persist reset
+                        const finalRoom = await roomToReset.save();
+                        io.to(roomCode).emit('room:update', finalRoom);
+                    } catch (err) {
+                        console.error('Error during post-win reset timeout:', err);
+                    }
+                }, SHOW_WINNER_MS);
+            }
 
         } catch (err) {
             console.error(err);
@@ -256,13 +328,13 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Manual round reset endpoint (keeps behavior similar to your existing / round:reset)
     socket.on('round:reset', async ({ roomCode }) => {
         try {
             let room = await Room.findOne({ code: roomCode });
             if (!room) return;
 
-            room.showCards = true;
-            
+            room.showCards = true; // show until reset
             let updatedRoom = await room.save();
             io.to(roomCode).emit('room:update', updatedRoom);
 

@@ -8,7 +8,7 @@ import AddPlayerForm from './AddPlayerForm';
 function PokerTable({ 
     players, pot, maxBet, currentTurnIndex, roomCode, myPlayerId,
     showCards, communityCards, stage, canSelectWinner,
-    needJoin
+    needJoin,
 }) {
     const socket = useSocket();
     const [selectedWinners, setSelectedWinners] = useState([]);

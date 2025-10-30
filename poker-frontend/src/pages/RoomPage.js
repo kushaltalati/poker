@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useSocket } from '../context/SocketContext';
 
 import PokerTable from '../components/PokerTable';
+import AddPlayerForm from '../components/AddPlayerForm';
 
 const PLAYER_ID_KEY = 'poker-player-id';
 
@@ -11,7 +12,6 @@ function RoomPage() {
     const socket = useSocket();
     const [room, setRoom] = useState(null);
     const [error, setError] = useState('');
-    const [showLeaveMenu, setShowLeaveMenu] = useState(false);
     
     const [myPlayerId, setMyPlayerId] = useState(() => {
         return localStorage.getItem(PLAYER_ID_KEY);
@@ -62,7 +62,11 @@ function RoomPage() {
         };
     }, [socket, roomCode, myPlayerId]);
 
-    
+    const handleResetRound = () => {
+        if (window.confirm("Show cards and end the round?")) {
+            socket.emit('round:reset', { roomCode });
+        }
+    };
 
     if (!room) {
         return <div className="loading-screen">
@@ -70,20 +74,6 @@ function RoomPage() {
             {error && <p className="error-message">{error}</p>}
         </div>;
     }
-
-    const leaveTemporarily = () => {
-        if (!socket || !room) return;
-        socket.emit('player:leave', { roomCode: room.code, mode: 'temporary' });
-        setShowLeaveMenu(false);
-    };
-
-    const leavePermanently = () => {
-        if (!socket || !room) return;
-        socket.emit('player:leave', { roomCode: room.code, mode: 'permanent' });
-        localStorage.removeItem(PLAYER_ID_KEY);
-        setMyPlayerId(null);
-        setShowLeaveMenu(false);
-    };
 
     return (
         <div className="room-container">
@@ -97,21 +87,9 @@ function RoomPage() {
                     <span>Join Code: <strong>{room.code}</strong></span>
                 </div>
                 {error && <div className="error-toast">{error}</div>}
-
-                {myPlayerId && (
-                    <div style={{ position: 'absolute', top: 15, right: 15, display: 'flex', gap: 8 }}>
-                        <button className="btn-reset" onClick={() => setShowLeaveMenu(v => !v)}>
-                            Leave
-                        </button>
-                        {showLeaveMenu && (
-                            <div style={{ position: 'absolute', top: 40, right: 0, background: '#242424', border: '1px solid #444', borderRadius: 8, padding: 10, zIndex: 1000 }}>
-                                <div style={{ marginBottom: 8, fontWeight: 700 }}>Leave game</div>
-                                <button className="btn-action btn-fold" style={{ width: '100%', marginBottom: 6 }} onClick={leavePermanently}>Leave Permanently</button>
-                                <button className="btn-action btn-raise" style={{ width: '100%' }} onClick={leaveTemporarily}>Leave Temporarily</button>
-                            </div>
-                        )}
-                    </div>
-                )}
+                <button onClick={handleResetRound} className="btn-reset">
+                    End Round
+                </button>
             </header>
 
             <PokerTable
@@ -122,12 +100,13 @@ function RoomPage() {
                 roomCode={room.code}
                 myPlayerId={myPlayerId}
                 showCards={room.showCards}
-                communityCards={room.communityCards}
-                stage={room.stage}
-                canSelectWinner={room.canSelectWinner}
-                needJoin={!myPlayerId || !room.players.find(p => p._id === myPlayerId)}
             />
 
+            {!myPlayerId && <AddPlayerForm roomCode={room.code} />}
+            
+            {myPlayerId && !room.players.find(p => p._id === myPlayerId) &&
+                 <AddPlayerForm roomCode={room.code} />
+            }
         </div>
     );
 }

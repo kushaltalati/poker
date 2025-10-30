@@ -55,6 +55,11 @@ function Player({ player, style, isActive, isSelf, roomCode, maxBet }) {
         setIsRaising(false);
     }
 
+    const handleRejoin = () => {
+        if (!socket || !player || !isSelf) return;
+        socket.emit('player:joinagain', { roomCode });
+    };
+
     const callAmount = maxBet - player.currentBet;
 
     let classNames = 'player-card';
@@ -65,7 +70,18 @@ function Player({ player, style, isActive, isSelf, roomCode, maxBet }) {
     return (
         <div className={classNames} style={style}>
             <div className="player-display">
-                <div className="player-icon">{player.name[0]}</div>
+                <div className="player-icon">
+                    {player.name[0]}
+                    {isSelf && player.inactive && (
+                        <button
+                            className="rejoin-btn"
+                            title="Rejoin Table"
+                            onClick={e => { e.stopPropagation(); handleRejoin(); }}
+                        >
+                            ↻
+                        </button>
+                    )}
+                </div>
                 <div className="player-info">
                     <strong className="player-name">{player.name.split(' ')[0]}</strong>
                     <span className="player-balance">₹{player.balance}</span>

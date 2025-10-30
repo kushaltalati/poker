@@ -211,7 +211,11 @@ io.on('connection', (socket) => {
             const activePlayers = getActivePlayers(room.players);
 
             let roundEnds = false;
-            if (activePlayers.length <= 1) {
+            let winnerId = null;
+            if (activePlayers.length === 1 && room.pot > 0) {
+                roundEnds = true;
+                winnerId = activePlayers[0]._id.toString();
+            } else if (activePlayers.length <= 1) {
                 roundEnds = true;
                 room.stage = 'showdown';
                 room.showCards = true;
@@ -228,7 +232,18 @@ io.on('connection', (socket) => {
                 }
             }
 
-            if (roundEnds) {
+            if (roundEnds && winnerId) {
+                // Award whole pot to this player, reset table
+                const winner = room.players.find(p => p._id.toString() === winnerId);
+                if (winner) winner.balance += room.pot;
+                room.pot = 0;
+                room.canSelectWinner = false;
+                room.communityCards = [];
+                room.showCards = false;
+                room.stage = 'preflop';
+                room.maxBet = 0;
+                room.players.forEach(p => { p.currentBet = 0; p.folded = false; });
+            } else if (roundEnds) {
                 advanceStage(room);
             }
             
@@ -340,6 +355,30 @@ io.on('connection', (socket) => {
         } catch (err) {
             console.error(err);
             socket.emit('error:server', 'Error leaving the game.');
+        }
+    });
+
+    socket.on('player:joinagain', async ({ roomCode }) => {
+        try {
+            const playerId = socketPlayerMap.get(socket.id);
+            if (!playerId) {
+                socket.emit('error:not_authorized', 'You are not linked to a player.');
+                return;
+            }
+            const room = await Room.findOne({ code: roomCode });
+            if (!room) return;
+            const p = room.players.find(p => p._id.toString() === playerId);
+            if (!p) {
+                socket.emit('error:not_authorized', 'Player not found in this room.');
+                return;
+            }
+            p.inactive = false;
+            p.folded = false;
+            await room.save();
+            io.to(roomCode).emit('room:update', room);
+        } catch (err) {
+            console.error(err);
+            socket.emit('error:server', 'Error rejoining the game.');
         }
     });
     
